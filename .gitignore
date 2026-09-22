@@ -1,0 +1,6 @@
+# Εικονικό περιβάλλον
+venv/
+
+# Python cache αρχεία
+__pycache__/
+*.pyc
