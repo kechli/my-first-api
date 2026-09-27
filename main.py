@@ -1,10 +1,63 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Depends, HTTPException 
 import httpx
 from async_lru import alru_cache
+from sqlalchemy.orm import Session
+import requests
+from bs4 import BeautifulSoup
+import models
+from database import engine, SessionLocal
 
-app = FastAPI(title="Tech News & GitHub Aggregator API")
-
+models.Base.metadata.create_all(bind=engine)
 # Header που απαιτεί το Reddit API για να μην μας μπλοκάρει
+app = FastAPI(title="Tech News & GitHub Aggregator API")
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+@app.get("/")
+def home():
+    return {"message": "Welcome to Tech News Aggregator API with PostgreSQL!"}
+
+# Endpoint για Scraping & Αποθήκευση στη Βάση Δεδομένων
+@app.get("/scrape")
+def scrape_and_save_news(db: Session = Depends(get_db)):
+    url = "https://news.ycombinator.com/"
+    response = requests.get(url)
+    
+    if response.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to fetch news")
+        
+    soup = BeautifulSoup(response.text, "html.parser")
+    articles_saved = 0
+
+    # Εξαγωγή τίτλων και συνδέσμων
+    for item in soup.select(".titleline > a"):
+        title = item.get_text()
+        link = item.get("href")
+        
+        # Έλεγχος αν το άρθρο υπάρχει ήδη στη βάση για να αποφύγουμε διπλότυπα
+        existing_article = db.query(models.Article).filter(models.Article.link == link).first()
+        if not existing_article:
+            new_article = models.Article(
+                title=title,
+                link=link,
+                source="Hacker News"
+            )
+            db.add(new_article)
+            articles_saved += 1
+
+    db.commit() # Αποθήκευση αλλαγών στη βάση
+    return {"message": f"Scraping completed! Saved {articles_saved} new articles to PostgreSQL."}
+
+# Endpoint για ανάγνωση όλων των αποθηκευμένων άρθρων από τη Βάση
+@app.get("/news")
+def get_stored_news(db: Session = Depends(get_db)):
+    articles = db.query(models.Article).all()
+    return {"total": len(articles), "articles": articles}
+
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
 
